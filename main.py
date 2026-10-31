@@ -4,7 +4,7 @@ import telebot
 import requests
 from flask import Flask
 
-# 1. Запуск Flask веб-сервера
+# 1. Запуск Flask веб-сервера для Render
 app = Flask(__name__)
 
 @app.route('/')
@@ -28,37 +28,32 @@ def handle_message(message):
     try:
         user_input = message.text if message.text else "[Голосовое сообщение]"
         
-        # Исправленный URL специально для Dify Chatflow
+        # Точный базовый эндпоинт (работает для Chatflow при полной структуре payload)
         url = "https://dify.ai"
         headers = {
             "Authorization": f"Bearer {DIFY_KEY}", 
             "Content-Type": "application/json"
         }
         
+        # Эталонный JSON-payload для Chatflow (со всеми обязательными для Nginx полями)
         payload = {
             "inputs": {},
             "query": user_input,
             "response_mode": "blocking",
             "user": f"tg_{message.chat.id}",
-            "conversation_id": ""
+            "conversation_id": None,
+            "files": []
         }
         
         res = requests.post(url, json=payload, headers=headers)
         
+        # Если сервер вернул не 200, выводим понятную ошибку
         if res.status_code != 200:
             bot.reply_to(message, f"Ошибка Dify (Код {res.status_code}): {res.text}")
             return
             
         response = res.json()
-        
-        # В Chatflow ответ может лежать в поле 'answer' или внутри событий стрима
-        ai_text = response.get('answer', '')
-        if not ai_text and 'event' in response:
-            ai_text = response.get('text', 'Ошибка: пустой ответ')
-            
-        if not ai_text:
-            ai_text = "Запрос обработан воркфлоу успешно."
-            
+        ai_text = response.get('answer', 'Ошибка: пустой ответ')
         bot.reply_to(message, ai_text)
         
     except Exception as e:
