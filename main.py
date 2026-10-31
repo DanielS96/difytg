@@ -2,8 +2,8 @@ import os
 import telebot
 import requests
 
-TOKEN = os.getenv("924486247:AAHLTPQQpoMLtp9xGJAobJLpecPMHRRsVzs")
-DIFY_KEY = os.getenv("app-36fGxJtAmmLaI2elAGzBX6uL")
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+DIFY_KEY = os.getenv("DIFY_API_KEY")
 
 bot = telebot.TeleBot(TOKEN)
 
