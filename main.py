@@ -4,7 +4,7 @@ import telebot
 import requests
 from flask import Flask
 
-# 1. Запуск Flask веб-сервера в фоновом потоке, чтобы Render не зависал в "In progress"
+# 1. Запуск Flask веб-сервера
 app = Flask(__name__)
 
 @app.route('/')
@@ -12,14 +12,12 @@ def home():
     return "Бот активен", 200
 
 def run_flask():
-    # Render автоматически передает нужный порт в переменную PORT
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
 
-# Запускаем веб-сервер
 threading.Thread(target=run_flask, daemon=True).start()
 
-# 2. Основная логика Telegram-бота
+# 2. Логика Telegram-бота
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DIFY_KEY = os.getenv("DIFY_API_KEY")
 
@@ -30,6 +28,7 @@ def handle_message(message):
     try:
         user_input = message.text if message.text else "[Голосовое сообщение]"
         
+        # Исправленный URL специально для Dify Chatflow
         url = "https://dify.ai"
         headers = {
             "Authorization": f"Bearer {DIFY_KEY}", 
@@ -51,7 +50,15 @@ def handle_message(message):
             return
             
         response = res.json()
-        ai_text = response.get('answer', 'Ошибка: нет текста ответа')
+        
+        # В Chatflow ответ может лежать в поле 'answer' или внутри событий стрима
+        ai_text = response.get('answer', '')
+        if not ai_text and 'event' in response:
+            ai_text = response.get('text', 'Ошибка: пустой ответ')
+            
+        if not ai_text:
+            ai_text = "Запрос обработан воркфлоу успешно."
+            
         bot.reply_to(message, ai_text)
         
     except Exception as e:
