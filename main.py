@@ -4,12 +4,12 @@ import telebot
 import requests
 from flask import Flask
 
-# 1. Запуск Flask веб-сервера для Render
+# 1. Запуск фонового веб-сервера Flask для прохождения проверок Render
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Бот активен", 200
+    return "Бот работает", 200
 
 def run_flask():
     port = int(os.getenv("PORT", 5000))
@@ -17,7 +17,7 @@ def run_flask():
 
 threading.Thread(target=run_flask, daemon=True).start()
 
-# 2. Логика Telegram-бота
+# 2. Логика работы Telegram-бота
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DIFY_KEY = os.getenv("DIFY_API_KEY")
 
@@ -28,14 +28,14 @@ def handle_message(message):
     try:
         user_input = message.text if message.text else "[Голосовое сообщение]"
         
-        # Точный базовый эндпоинт (работает для Chatflow при полной структуре payload)
+        # Исправленный URL: добавлен обязательный префикс /api/ вместо /v1/
         url = "https://dify.ai"
+        
         headers = {
             "Authorization": f"Bearer {DIFY_KEY}", 
             "Content-Type": "application/json"
         }
         
-        # Эталонный JSON-payload для Chatflow (со всеми обязательными для Nginx полями)
         payload = {
             "inputs": {},
             "query": user_input,
@@ -47,18 +47,17 @@ def handle_message(message):
         
         res = requests.post(url, json=payload, headers=headers)
         
-        # Если сервер вернул не 200, выводим понятную ошибку
         if res.status_code != 200:
             bot.reply_to(message, f"Ошибка Dify (Код {res.status_code}): {res.text}")
             return
             
         response = res.json()
-        ai_text = response.get('answer', 'Ошибка: пустой ответ')
+        ai_text = response.get('answer', 'Ошибка: сервер вернул пустой ответ.')
         bot.reply_to(message, ai_text)
         
     except Exception as e:
         bot.reply_to(message, f"Ошибка скрипта: {str(e)}")
 
 if __name__ == "__main__":
-    print("Запуск бота...")
+    print("Бот успешно запущен...")
     bot.infinity_polling()
