@@ -6,7 +6,7 @@ import requests
 import json
 from flask import Flask
 
-# 1. Запуск Flask веб-сервера для Render
+# 1. Запуск Flask веб-сервера для Render (чтобы статус горел Live)
 app = Flask(__name__)
 
 @app.route('/')
@@ -30,7 +30,8 @@ def handle_message(message):
     try:
         user_input = ""
         headers = {
-            "Authorization": f"Base {DIFY_KEY}" if "Base" in DIFY_KEY else f"Bearer {DIFY_KEY}"
+            "Authorization": f"Bearer {DIFY_KEY}",
+            "Content-Type": "application/json"
         }
 
         # ЕСЛИ ПРИШЕЛ ТЕКСТ:
@@ -44,10 +45,11 @@ def handle_message(message):
             
             # Переводим аудио в текст через аудио-эндпоинт Dify
             audio_url = "https://dify.ai"
+            audio_headers = {"Authorization": f"Bearer {DIFY_KEY}"}
             files = {'file': ('voice.ogg', file_data, 'audio/ogg')}
             data = {"user": f"tg_{message.chat.id}"}
             
-            audio_res = requests.post(audio_url, data=data, files=files, headers=headers)
+            audio_res = requests.post(audio_url, data=data, files=files, headers=audio_headers)
             if audio_res.status_code != 200:
                 bot.reply_to(message, f"Ошибка распознавания речи (Код {audio_res.status_code}): {audio_res.text}")
                 return
@@ -57,20 +59,19 @@ def handle_message(message):
             bot.reply_to(message, "Не удалось распознать текст запроса.")
             return
 
-        # ОТПРАВКА В CHATFLOW ЧЕРЕЗ MULTIPART/FORM-DATA (Обход ошибки 405)
+        # ИСПРАВЛЕННЫЙ URL И PAYLOAD ДЛЯ MULTI-AGENT CHATFLOW (Обход ошибки 405)
         chat_url = "https://dify.ai"
         
-        # Для FormData НЕЛЬЗЯ жестко прописывать Content-Type заголовком, requests сделает это сам
-        data_payload = {
-            "inputs": json.dumps({}),
+        payload = {
+            "inputs": {},
             "query": user_input,
             "response_mode": "streaming",
             "user": f"tg_{message.chat.id}",
-            "conversation_id": ""
+            "conversation_id": None,
+            "files": []
         }
         
-        # Отправляем пустой словарь в files, чтобы requests принудительно переключил протокол на multipart/form-data
-        res = requests.post(chat_url, data=data_payload, files={'files': (None, '')}, headers=headers, stream=True)
+        res = requests.post(chat_url, json=payload, headers=headers, stream=True)
         
         if res.status_code != 200:
             bot.reply_to(message, f"Ошибка Dify (Код {res.status_code}): {res.text}")
@@ -85,15 +86,14 @@ def handle_message(message):
                         json_str = decoded_line[5:].strip()
                         data = json.loads(json_str)
                         
-                        if "answer" in data:
-                            full_answer += data.get("answer", "")
-                        elif "text" in data:
-                            full_answer += data.get("text", "")
+                        # Собираем текстовые куски из потока мультиагентного Chatflow
+                        if data.get("event") in ["message", "agent_message", "text_chunk"]:
+                            full_answer += data.get("answer", "") or data.get("text", "")
                     except:
                         continue
                         
         if not full_answer:
-            bot.reply_to(message, "Ошибка: стрим Dify пуст. Убедитесь, что в блоке ANSWER в Dify вставлена переменная {{MODERATOR.text}}.")
+            bot.reply_to(message, "Ошибка: ответ пуст. Убедитесь, что в Dify в блоке ANSWER вставлена переменная {{MODERATOR.text}}.")
             return
             
         bot.reply_to(message, full_answer)
@@ -109,5 +109,5 @@ def start_polling():
             time.sleep(5)
 
 if __name__ == "__main__":
-    print("Бот успешно запущен в фоновом режиме...")
+    print("Бот успешно запущен...")
     start_polling()
