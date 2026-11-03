@@ -6,12 +6,12 @@ import requests
 import json
 from flask import Flask
 
-# 1. Фоновый веб-сервер Flask для Render
+# 1. Запуск Flask веб-сервера для Render
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Бот работает в облаке стабильно", 200
+    return "Сервер совещаний фонда активен", 200
 
 def run_flask():
     port = int(os.getenv("PORT", 5000))
@@ -29,55 +29,54 @@ bot = telebot.TeleBot(TOKEN)
 def handle_message(message):
     try:
         user_input = ""
-        headers = {"Authorization": f"Bearer {DIFY_KEY}"}
+        headers = {
+            "Authorization": f"Base {DIFY_KEY}" if "Base" in DIFY_KEY else f"Bearer {DIFY_KEY}"
+        }
 
-        # Обработка текста
+        # ЕСЛИ ПРИШЕЛ ТЕКСТ:
         if message.content_type == 'text':
             user_input = message.text
 
-        # Обработка голосового сообщения
+        # ЕСЛИ ПРИШЛО ГОЛОСОВОЕ СООБЩЕНИЕ:
         elif message.content_type == 'voice':
             file_info = bot.get_file(message.voice.file_id)
             file_data = bot.download_file(file_info.file_path)
             
+            # Переводим аудио в текст через аудио-эндпоинт Dify
             audio_url = "https://dify.ai"
             files = {'file': ('voice.ogg', file_data, 'audio/ogg')}
             data = {"user": f"tg_{message.chat.id}"}
             
             audio_res = requests.post(audio_url, data=data, files=files, headers=headers)
             if audio_res.status_code != 200:
-                bot.reply_to(message, f"Ошибка аудио-модуля Dify (Код {audio_res.status_code}): {audio_res.text}")
+                bot.reply_to(message, f"Ошибка распознавания речи (Код {audio_res.status_code}): {audio_res.text}")
                 return
             user_input = audio_res.json().get('text', '')
 
         if not user_input:
-            bot.reply_to(message, "Не удалось получить текст запроса.")
+            bot.reply_to(message, "Не удалось распознать текст запроса.")
             return
 
-        # Отправка в Dify Chatflow
+        # ОТПРАВКА В CHATFLOW ЧЕРЕЗ MULTIPART/FORM-DATA (Обход ошибки 405)
         chat_url = "https://dify.ai"
-        chat_headers = {
-            "Authorization": f"Bearer {DIFY_KEY}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "inputs": {},
+        
+        # Для FormData НЕЛЬЗЯ жестко прописывать Content-Type заголовком, requests сделает это сам
+        data_payload = {
+            "inputs": json.dumps({}),
             "query": user_input,
             "response_mode": "streaming",
             "user": f"tg_{message.chat.id}",
-            "conversation_id": None,
-            "files": []
+            "conversation_id": ""
         }
         
-        res = requests.post(chat_url, json=payload, headers=chat_headers, stream=True)
+        # Отправляем пустой словарь в files, чтобы requests принудительно переключил протокол на multipart/form-data
+        res = requests.post(chat_url, data=data_payload, files={'files': (None, '')}, headers=headers, stream=True)
         
         if res.status_code != 200:
             bot.reply_to(message, f"Ошибка Dify (Код {res.status_code}): {res.text}")
             return
             
         full_answer = ""
-        
-        # Построчно читаем стрим событий от Dify
         for line in res.iter_lines():
             if line:
                 decoded_line = line.decode('utf-8')
@@ -86,29 +85,21 @@ def handle_message(message):
                         json_str = decoded_line[5:].strip()
                         data = json.loads(json_str)
                         
-                        # Перехватываем ответ из ЛЮБЫХ возможных событий Chatflow
-                        # (включая message, agent_message, text_chunk и финальные ноды)
                         if "answer" in data:
                             full_answer += data.get("answer", "")
                         elif "text" in data:
                             full_answer += data.get("text", "")
-                        elif data.get("event") == "node_finished" and "outputs" in data:
-                            # Экстренный перехват прямо из логов выполнения ноды ANSWER
-                            outputs = data.get("data", {}).get("outputs", {})
-                            if "text" in outputs:
-                                full_answer += outputs.get("text", "")
                     except:
                         continue
                         
-        # Если текст все еще пустой, выводим сырой лог последнего события для отладки
         if not full_answer:
-            bot.reply_to(message, "Ошибка: Dify прислал пустой ответ в стриме. Проверьте, что в блоке ANSWER в Dify написан текст или вставлена переменная {{MODERATOR.text}}.")
+            bot.reply_to(message, "Ошибка: стрим Dify пуст. Убедитесь, что в блоке ANSWER в Dify вставлена переменная {{MODERATOR.text}}.")
             return
             
         bot.reply_to(message, full_answer)
         
     except Exception as e:
-        bot.reply_to(message, f"Критический сбой скрипта: {str(e)}")
+        bot.reply_to(message, f"Ошибка скрипта: {str(e)}")
 
 def start_polling():
     while True:
@@ -118,4 +109,5 @@ def start_polling():
             time.sleep(5)
 
 if __name__ == "__main__":
+    print("Бот успешно запущен в фоновом режиме...")
     start_polling()
