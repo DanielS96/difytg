@@ -6,7 +6,7 @@ import requests
 import json
 from flask import Flask
 
-# 1. Запуск Flask веб-сервера для Render (чтобы статус горел Live)
+# 1. Запуск Flask веб-сервера для Render
 app = Flask(__name__)
 
 @app.route('/')
@@ -59,7 +59,7 @@ def handle_message(message):
             bot.reply_to(message, "Не удалось распознать текст запроса.")
             return
 
-        # ИСПРАВЛЕННЫЙ URL И PAYLOAD ДЛЯ MULTI-AGENT CHATFLOW (Обход ошибки 405)
+        # ТОЧНЫЙ ЭНДПОИНТ ДЛЯ ADVANCED CHATFLOW (Обязательно HTTPS)
         chat_url = "https://dify.ai"
         
         payload = {
@@ -71,10 +71,11 @@ def handle_message(message):
             "files": []
         }
         
+        # Запрашиваем поток данных
         res = requests.post(chat_url, json=payload, headers=headers, stream=True)
         
         if res.status_code != 200:
-            bot.reply_to(message, f"Ошибка Dify (Код {res.status_code}): {res.text}")
+            bot.reply_to(message, f"Ошибка Dify (Код {res.status_code}): {res.text}\nПроверьте, что в переменной DIFY_API_KEY на Render нет пробелов.")
             return
             
         full_answer = ""
@@ -86,14 +87,14 @@ def handle_message(message):
                         json_str = decoded_line[5:].strip()
                         data = json.loads(json_str)
                         
-                        # Собираем текстовые куски из потока мультиагентного Chatflow
+                        # Собираем куски ответов
                         if data.get("event") in ["message", "agent_message", "text_chunk"]:
                             full_answer += data.get("answer", "") or data.get("text", "")
                     except:
                         continue
                         
         if not full_answer:
-            bot.reply_to(message, "Ошибка: ответ пуст. Убедитесь, что в Dify в блоке ANSWER вставлена переменная {{MODERATOR.text}}.")
+            bot.reply_to(message, "Стрим завершился пустой строкой. Убедитесь, что в Dify в финальном блоке ANSWER привязана переменная {{MODERATOR.text}}.")
             return
             
         bot.reply_to(message, full_answer)
