@@ -59,23 +59,22 @@ def handle_message(message):
             bot.reply_to(message, "Не удалось распознать текст запроса.")
             return
 
-        # ТОЧНЫЙ ЭНДПОИНТ ДЛЯ ADVANCED CHATFLOW (Обязательно HTTPS)
+        # ЕДИНСТВЕННЫЙ РАБОЧИЙ ЭНДПОИНТ ДЛЯ ПОТОКОВЫХ СХЕМ (ВОРКФЛОУ)
         chat_url = "https://dify.ai"
         
+        # Передаем query внутрь переменной, как требует эндпоинт воркфлоу
         payload = {
-            "inputs": {},
-            "query": user_input,
+            "inputs": {
+                "query": user_input
+            },
             "response_mode": "streaming",
-            "user": f"tg_{message.chat.id}",
-            "conversation_id": None,
-            "files": []
+            "user": f"tg_{message.chat.id}"
         }
         
-        # Запрашиваем поток данных
         res = requests.post(chat_url, json=payload, headers=headers, stream=True)
         
         if res.status_code != 200:
-            bot.reply_to(message, f"Ошибка Dify (Код {res.status_code}): {res.text}\nПроверьте, что в переменной DIFY_API_KEY на Render нет пробелов.")
+            bot.reply_to(message, f"Ошибка Dify (Код {res.status_code}): {res.text}\nПроверьте API-ключ в настройках Render.")
             return
             
         full_answer = ""
@@ -87,14 +86,19 @@ def handle_message(message):
                         json_str = decoded_line[5:].strip()
                         data = json.loads(json_str)
                         
-                        # Собираем куски ответов
-                        if data.get("event") in ["message", "agent_message", "text_chunk"]:
-                            full_answer += data.get("answer", "") or data.get("text", "")
+                        # Собираем ответ из событий воркфлоу
+                        if data.get("event") == "text_chunk":
+                            full_answer += data.get("data", {}).get("text", "")
+                        elif data.get("event") == "workflow_finished":
+                            # Экстренный перехват из финальных выходов
+                            outputs = data.get("data", {}).get("outputs", {})
+                            if "text" in outputs and not full_answer:
+                                full_answer = outputs.get("text", "")
                     except:
                         continue
                         
         if not full_answer:
-            bot.reply_to(message, "Стрим завершился пустой строкой. Убедитесь, что в Dify в финальном блоке ANSWER привязана переменная {{MODERATOR.text}}.")
+            bot.reply_to(message, "Воркфлоу отработал, но финальный текст пуст. Убедитесь, что в Dify на выходе из блока ANSWER (или в финальных параметрах Workflow) возвращается нужный текст.")
             return
             
         bot.reply_to(message, full_answer)
