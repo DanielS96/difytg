@@ -1,16 +1,17 @@
 import os
 import threading
+import time
 import telebot
 import requests
 import json
 from flask import Flask
 
-# 1. Фоновый Flask веб-сервер для прохождения тестов Render
+# 1. Фоновый веб-сервер Flask для Render
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Бот работает в облаке", 200
+    return "Бот работает в облаке стабильно", 200
 
 def run_flask():
     port = int(os.getenv("PORT", 5000))
@@ -18,7 +19,7 @@ def run_flask():
 
 threading.Thread(target=run_flask, daemon=True).start()
 
-# 2. Основная логика работы Telegram-бота
+# 2. Логика работы Telegram-бота
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DIFY_KEY = os.getenv("DIFY_API_KEY")
 
@@ -27,28 +28,48 @@ bot = telebot.TeleBot(TOKEN)
 @bot.message_handler(content_types=['text', 'voice'])
 def handle_message(message):
     try:
-        user_input = message.text if message.text else "[Голосовое сообщение]"
-        
-        # Возвращаем официальный базовый URL облака Dify
-        url = "https://api.dify.ai/v1/chat-messages"
-        
-        headers = {
-            "Authorization": f"Bearer {DIFY_KEY}", 
+        user_input = ""
+        headers = {"Authorization": f"Bearer {DIFY_KEY}"}
+
+        # Обработка текста
+        if message.content_type == 'text':
+            user_input = message.text
+
+        # Обработка голосового сообщения
+        elif message.content_type == 'voice':
+            file_info = bot.get_file(message.voice.file_id)
+            file_data = bot.download_file(file_info.file_path)
+            
+            audio_url = "https://dify.ai"
+            files = {'file': ('voice.ogg', file_data, 'audio/ogg')}
+            data = {"user": f"tg_{message.chat.id}"}
+            
+            audio_res = requests.post(audio_url, data=data, files=files, headers=headers)
+            if audio_res.status_code != 200:
+                bot.reply_to(message, f"Ошибка аудио-модуля Dify (Код {audio_res.status_code}): {audio_res.text}")
+                return
+            user_input = audio_res.json().get('text', '')
+
+        if not user_input:
+            bot.reply_to(message, "Не удалось получить текст запроса.")
+            return
+
+        # Отправка в Dify Chatflow
+        chat_url = "https://dify.ai"
+        chat_headers = {
+            "Authorization": f"Bearer {DIFY_KEY}",
             "Content-Type": "application/json"
         }
-        
-        # Включаем ОБЯЗАТЕЛЬНЫЙ для Chatflow режим streaming
         payload = {
             "inputs": {},
             "query": user_input,
-            "response_mode": "streaming",  # Изменено на streaming для обхода ошибки 405
+            "response_mode": "streaming",
             "user": f"tg_{message.chat.id}",
             "conversation_id": None,
             "files": []
         }
         
-        # Запрашиваем поток данных (stream=True)
-        res = requests.post(url, json=payload, headers=headers, stream=True)
+        res = requests.post(chat_url, json=payload, headers=chat_headers, stream=True)
         
         if res.status_code != 200:
             bot.reply_to(message, f"Ошибка Dify (Код {res.status_code}): {res.text}")
@@ -56,7 +77,7 @@ def handle_message(message):
             
         full_answer = ""
         
-        # Читаем поток событий от Dify построчно
+        # Построчно читаем стрим событий от Dify
         for line in res.iter_lines():
             if line:
                 decoded_line = line.decode('utf-8')
@@ -65,20 +86,36 @@ def handle_message(message):
                         json_str = decoded_line[5:].strip()
                         data = json.loads(json_str)
                         
-                        # Собираем текст ответа из кусочков стрима
-                        if data.get("event") == "message" or data.get("event") == "agent_message":
+                        # Перехватываем ответ из ЛЮБЫХ возможных событий Chatflow
+                        # (включая message, agent_message, text_chunk и финальные ноды)
+                        if "answer" in data:
                             full_answer += data.get("answer", "")
+                        elif "text" in data:
+                            full_answer += data.get("text", "")
+                        elif data.get("event") == "node_finished" and "outputs" in data:
+                            # Экстренный перехват прямо из логов выполнения ноды ANSWER
+                            outputs = data.get("data", {}).get("outputs", {})
+                            if "text" in outputs:
+                                full_answer += outputs.get("text", "")
                     except:
                         continue
                         
+        # Если текст все еще пустой, выводим сырой лог последнего события для отладки
         if not full_answer:
-            full_answer = "Запрос успешно обработан архитектурой фонда."
+            bot.reply_to(message, "Ошибка: Dify прислал пустой ответ в стриме. Проверьте, что в блоке ANSWER в Dify написан текст или вставлена переменная {{MODERATOR.text}}.")
+            return
             
         bot.reply_to(message, full_answer)
         
     except Exception as e:
-        bot.reply_to(message, f"Ошибка скрипта: {str(e)}")
+        bot.reply_to(message, f"Критический сбой скрипта: {str(e)}")
+
+def start_polling():
+    while True:
+        try:
+            bot.infinity_polling(timeout=20, long_polling_timeout=10)
+        except Exception as e:
+            time.sleep(5)
 
 if __name__ == "__main__":
-    print("Бот успешно запущен...")
-    bot.infinity_polling()
+    start_polling()
