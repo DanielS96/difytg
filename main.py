@@ -30,7 +30,6 @@ def send_large_message(chat_id, text, reply_to_id):
     if len(text) <= MAX_LENGTH:
         bot.send_message(chat_id, text, reply_to_message_id=reply_to_id)
     else:
-        # Режем текст по кускам
         for i in range(0, len(text), MAX_LENGTH):
             part = text[i:i + MAX_LENGTH]
             bot.send_message(chat_id, part)
@@ -40,7 +39,7 @@ def handle_message(message):
     try:
         user_input = message.text if message.text else "[Голосовое сообщение]"
         
-        url = "https://api.dify.ai/v1/chat-messages"
+        url = "https://dify.ai"
         
         headers = {
             "Authorization": f"Bearer {DIFY_KEY}", 
@@ -72,15 +71,24 @@ def handle_message(message):
                         json_str = decoded_line[5:].strip()
                         data = json.loads(json_str)
                         
-                        if data.get("event") == "message" or data.get("event") == "agent_message":
-                            full_answer += data.get("answer", "")
+                        # РАСШИРЕННЫЙ ПЕРЕХВАТ СОБЫТИЙ ДЛЯ MULTI-AGENT CHATFLOW:
+                        # Забираем данные из стандартных сообщений, кусков текста воркфлоу и финальных нод
+                        if data.get("event") in ["message", "agent_message", "text_chunk"]:
+                            full_answer += data.get("answer", "") or data.get("text", "")
+                        
+                        # Экстренный перехват: если текст упакован внутрь отчета о завершении ноды ANSWER
+                        elif data.get("event") == "node_finished":
+                            node_data = data.get("data", {})
+                            if node_data.get("node_type") == "answer":
+                                outputs = node_data.get("outputs", {})
+                                if "text" in outputs:
+                                    full_answer += outputs.get("text", "")
                     except:
                         continue
                         
         if not full_answer:
-            full_answer = "Запрос успешно обработан архитектурой фонда."
+            full_answer = "Запрос успешно обработан, но финальный текст ответа пуст. Убедитесь, что в Dify в блоке ANSWER вставлена переменная {{MODERATOR.text}}."
             
-        # Используем безопасную отправку длинных сообщений вместо bot.reply_to
         send_large_message(message.chat.id, full_answer, message.message_id)
         
     except Exception as e:
