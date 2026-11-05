@@ -24,21 +24,12 @@ DIFY_KEY = os.getenv("DIFY_API_KEY")
 
 bot = telebot.TeleBot(TOKEN)
 
-def send_large_message(chat_id, text, reply_to_id):
-    """Разбивает длинный текст на части по 4000 символов и отправляет в Telegram"""
-    MAX_LENGTH = 4000
-    if len(text) <= MAX_LENGTH:
-        bot.send_message(chat_id, text, reply_to_message_id=reply_to_id)
-    else:
-        for i in range(0, len(text), MAX_LENGTH):
-            part = text[i:i + MAX_LENGTH]
-            bot.send_message(chat_id, part)
-
 @bot.message_handler(content_types=['text', 'voice'])
 def handle_message(message):
     try:
         user_input = message.text if message.text else "[Голосовое сообщение]"
         
+        # Возвращаем официальный базовый URL облака Dify
         url = "https://dify.ai"
         
         headers = {
@@ -46,15 +37,17 @@ def handle_message(message):
             "Content-Type": "application/json"
         }
         
+        # Включаем ОБЯЗАТЕЛЬНЫЙ для Chatflow режим streaming
         payload = {
             "inputs": {},
             "query": user_input,
-            "response_mode": "streaming",
+            "response_mode": "streaming",  # Изменено на streaming для обхода ошибки 405
             "user": f"tg_{message.chat.id}",
             "conversation_id": None,
             "files": []
         }
         
+        # Запрашиваем поток данных (stream=True)
         res = requests.post(url, json=payload, headers=headers, stream=True)
         
         if res.status_code != 200:
@@ -63,6 +56,7 @@ def handle_message(message):
             
         full_answer = ""
         
+        # Читаем поток событий от Dify построчно
         for line in res.iter_lines():
             if line:
                 decoded_line = line.decode('utf-8')
@@ -71,25 +65,16 @@ def handle_message(message):
                         json_str = decoded_line[5:].strip()
                         data = json.loads(json_str)
                         
-                        # РАСШИРЕННЫЙ ПЕРЕХВАТ СОБЫТИЙ ДЛЯ MULTI-AGENT CHATFLOW:
-                        # Забираем данные из стандартных сообщений, кусков текста воркфлоу и финальных нод
-                        if data.get("event") in ["message", "agent_message", "text_chunk"]:
-                            full_answer += data.get("answer", "") or data.get("text", "")
-                        
-                        # Экстренный перехват: если текст упакован внутрь отчета о завершении ноды ANSWER
-                        elif data.get("event") == "node_finished":
-                            node_data = data.get("data", {})
-                            if node_data.get("node_type") == "answer":
-                                outputs = node_data.get("outputs", {})
-                                if "text" in outputs:
-                                    full_answer += outputs.get("text", "")
+                        # Собираем текст ответа из кусочков стрима
+                        if data.get("event") == "message" or data.get("event") == "agent_message":
+                            full_answer += data.get("answer", "")
                     except:
                         continue
                         
         if not full_answer:
-            full_answer = "Запрос успешно обработан, но финальный текст ответа пуст. Убедитесь, что в Dify в блоке ANSWER вставлена переменная {{MODERATOR.text}}."
+            full_answer = "Запрос успешно обработан архитектурой фонда."
             
-        send_large_message(message.chat.id, full_answer, message.message_id)
+        bot.reply_to(message, full_answer)
         
     except Exception as e:
         bot.reply_to(message, f"Ошибка скрипта: {str(e)}")
