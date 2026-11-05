@@ -24,30 +24,38 @@ DIFY_KEY = os.getenv("DIFY_API_KEY")
 
 bot = telebot.TeleBot(TOKEN)
 
+def send_large_message(chat_id, text, reply_to_id):
+    """Разбивает длинный текст на части по 4000 символов и отправляет в Telegram"""
+    MAX_LENGTH = 4000
+    if len(text) <= MAX_LENGTH:
+        bot.send_message(chat_id, text, reply_to_message_id=reply_to_id)
+    else:
+        # Режем текст по кускам
+        for i in range(0, len(text), MAX_LENGTH):
+            part = text[i:i + MAX_LENGTH]
+            bot.send_message(chat_id, part)
+
 @bot.message_handler(content_types=['text', 'voice'])
 def handle_message(message):
     try:
         user_input = message.text if message.text else "[Голосовое сообщение]"
         
-        # Возвращаем официальный базовый URL облака Dify
-        url = "https://dify.ai"
+        url = "https://api.dify.ai/v1/chat-messages"
         
         headers = {
             "Authorization": f"Bearer {DIFY_KEY}", 
             "Content-Type": "application/json"
         }
         
-        # Включаем ОБЯЗАТЕЛЬНЫЙ для Chatflow режим streaming
         payload = {
             "inputs": {},
             "query": user_input,
-            "response_mode": "streaming",  # Изменено на streaming для обхода ошибки 405
+            "response_mode": "streaming",
             "user": f"tg_{message.chat.id}",
             "conversation_id": None,
             "files": []
         }
         
-        # Запрашиваем поток данных (stream=True)
         res = requests.post(url, json=payload, headers=headers, stream=True)
         
         if res.status_code != 200:
@@ -56,7 +64,6 @@ def handle_message(message):
             
         full_answer = ""
         
-        # Читаем поток событий от Dify построчно
         for line in res.iter_lines():
             if line:
                 decoded_line = line.decode('utf-8')
@@ -65,7 +72,6 @@ def handle_message(message):
                         json_str = decoded_line[5:].strip()
                         data = json.loads(json_str)
                         
-                        # Собираем текст ответа из кусочков стрима
                         if data.get("event") == "message" or data.get("event") == "agent_message":
                             full_answer += data.get("answer", "")
                     except:
@@ -74,7 +80,8 @@ def handle_message(message):
         if not full_answer:
             full_answer = "Запрос успешно обработан архитектурой фонда."
             
-        bot.reply_to(message, full_answer)
+        # Используем безопасную отправку длинных сообщений вместо bot.reply_to
+        send_large_message(message.chat.id, full_answer, message.message_id)
         
     except Exception as e:
         bot.reply_to(message, f"Ошибка скрипта: {str(e)}")
